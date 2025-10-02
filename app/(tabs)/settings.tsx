@@ -55,7 +55,6 @@ export default function SettingsTab() {
           <Button
             mode={darkMode ? 'contained' : 'outlined'}
             style={{ alignSelf: 'stretch' }}
-            contentStyle={{ paddingVertical: 6 }}
             onPress={() => {
               const nextValue = !darkMode;
               setDarkMode(nextValue);
