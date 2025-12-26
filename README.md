@@ -25,3 +25,6 @@ Tenant and electricity usage tracker built with Expo Router, React Native, and R
 - `app/` – Expo Router routes (tabs, modals, and detail screens).
 - `src/DataContext.tsx` – Central data store with AsyncStorage persistence.
 - `src/components/Screen.tsx` – Shared layout wrapper handling safe areas and headers.
+
+### App Preview
+![photo](photo.png)
