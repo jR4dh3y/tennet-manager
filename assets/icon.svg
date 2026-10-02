@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>Tennet Manager</title>
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="30%" r="80%">
+      <stop offset="0" stop-color="#1E2A55"/>
+      <stop offset="1" stop-color="#121A33"/>
+    </radialGradient>
+    <linearGradient id="house" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7286EA"/>
+      <stop offset="1" stop-color="#4F63C9"/>
+    </linearGradient>
+    <linearGradient id="bolt" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFCF5C"/>
+      <stop offset="1" stop-color="#F59E0B"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="224" fill="url(#bg)"/>
+  <g id="glyph" transform="translate(0 -14)">
+    <path d="M512 214 L800 446 L800 794 L224 794 L224 446 Z"
+          fill="url(#house)" stroke="url(#house)" stroke-width="56" stroke-linejoin="round"/>
+    <path d="M572 330 L404 590 L506 590 L458 840 L640 532 L534 532 L600 330 Z"
+          fill="url(#bolt)" stroke="#121A33" stroke-width="28" stroke-linejoin="round" paint-order="stroke"/>
+  </g>
+</svg>

@@ -1,148 +1,164 @@
+import { router } from 'expo-router';
 import React, { useMemo } from 'react';
-import { ScrollView, View } from 'react-native';
-import { Link } from 'expo-router';
-import { Button, Card, Chip, Divider, Text } from 'react-native-paper';
-import { useData } from '../../src/DataContext';
+import { View } from 'react-native';
+import { Button, Card, List, Text, useTheme } from 'react-native-paper';
+import EmptyState from '../../src/components/EmptyState';
+import Panel from '../../src/components/Panel';
 import Screen from '../../src/components/Screen';
+import Section from '../../src/components/Section';
+import StatCard from '../../src/components/StatCard';
+import { useData } from '../../src/DataContext';
+import { formatMoney, formatRelativeDay, formatUnits } from '../../src/lib/format';
+import { READING_INTERVAL_DAYS, readingHistory, summarizeTenants } from '../../src/lib/readings';
+
+const RECENT_LIMIT = 5;
 
 export default function OverviewScreen() {
-  const { data, exportToFile, importFromFile } = useData();
+  const theme = useTheme();
+  const { data } = useData();
+  const symbol = data.settings.currencySymbol;
 
-  const totalTenants = data.tenants.length;
-  const totalReadings = data.readings.length;
-  const lastUpdated = data.updatedAt ? new Date(data.updatedAt) : undefined;
+  const summaries = useMemo(() => summarizeTenants(data), [data]);
+  const overdue = summaries.filter(s => s.overdue);
+  const totalUsage = summaries.reduce((sum, s) => sum + (s.lastUsage ?? 0), 0);
+  const totalBill = summaries.reduce((sum, s) => sum + (s.lastBill ?? 0), 0);
 
-  const recentReadings = useMemo(() => {
-    return [...data.readings]
-      .sort((a, b) => (a.date < b.date ? 1 : -1))
-      .slice(0, 5);
-  }, [data.readings]);
-
-  const overdueTenants = useMemo(() => {
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-    const lastReadingByTenant = new Map<string, Date>();
-    data.readings.forEach(reading => {
-      const current = lastReadingByTenant.get(reading.tenantId);
-      const readingDate = new Date(reading.date);
-      if (!current || current < readingDate) {
-        lastReadingByTenant.set(reading.tenantId, readingDate);
-      }
-    });
-
-    return data.tenants.filter(tenant => {
-      const last = lastReadingByTenant.get(tenant.id);
-      if (!last) return true;
-      return last < thirtyDaysAgo;
-    });
+  const recent = useMemo(() => {
+    const names = new Map(data.tenants.map(t => [t.id, t.name]));
+    return data.tenants
+      .flatMap(t => readingHistory(data.readings, t.id))
+      .sort((a, b) => (a.reading.date < b.reading.date ? 1 : -1))
+      .slice(0, RECENT_LIMIT)
+      .map(entry => ({ ...entry, tenantName: names.get(entry.reading.tenantId) ?? 'Unknown tenant' }));
   }, [data.tenants, data.readings]);
 
-  return (
-    <Screen scroll title="">
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ gap: 12, paddingRight: 20 }}
-      >
-        <Card mode="contained" style={{ minWidth: 200 }}>
-          <Card.Title title="Tenants Managed" />
-          <Card.Content>
-            <Text variant="displaySmall">{totalTenants}</Text>
-          </Card.Content>
-        </Card>
-        <Card mode="contained" style={{ minWidth: 200 }}>
-          <Card.Title title="Readings logged" />
-          <Card.Content>
-            <Text variant="displaySmall">{totalReadings}</Text>
-          </Card.Content>
-        </Card>
-        <Card mode="contained" style={{ minWidth: 200 }}>
-          <Card.Title title="Last updated" />
-          <Card.Content>
-            <Text variant="displaySmall">
-              {lastUpdated ? lastUpdated.toLocaleDateString() : 'Never'}
-            </Text>
-          </Card.Content>
-        </Card>
-      </ScrollView>
+  if (data.tenants.length === 0) {
+    return (
+      <Screen title="Overview" inTabs>
+        <Panel>
+          <EmptyState
+            icon="home-lightning-bolt-outline"
+            title="Welcome to Tennet Manager"
+            message="Track each tenant's electricity meter and see what they owe at a glance. Start by adding your first tenant."
+            action={
+              <Button mode="contained" icon="account-plus" onPress={() => router.push('/tenant/new')}>
+                Add tenant
+              </Button>
+            }
+          />
+        </Panel>
+      </Screen>
+    );
+  }
 
+  return (
+    <Screen title="Overview" inTabs>
       <View style={{ gap: 12 }}>
-        <Text variant="titleMedium">Quick actions</Text>
-        <View style={{ flexDirection: 'row', gap: 12, flexWrap: 'wrap' }}>
-          <Link href="/tenant/new" asChild>
-            <Button mode="contained">
-              Add tenant
-            </Button>
-          </Link>
-          <Link href={{ pathname: '/reading/new' }} asChild>
-            <Button mode="outlined">
-              Log reading
-            </Button>
-          </Link>
+        <StatCard
+          highlight
+          icon="cash"
+          label="Latest bills"
+          value={formatMoney(totalBill, symbol)}
+          caption="Usage between each tenant's last two readings"
+        />
+        <View style={{ flexDirection: 'row', gap: 12 }}>
+          <StatCard icon="flash" label="Latest usage" value={formatUnits(totalUsage)} />
+          <StatCard
+            icon="account-group"
+            label="Tenants"
+            value={String(data.tenants.length)}
+            caption={`${data.readings.length} readings`}
+          />
         </View>
       </View>
 
-      <Divider style={{ marginVertical: 8 }} />
-
-      <View style={{ gap: 12 }}>
-        <Text variant="titleMedium">Recent readings</Text>
-        {recentReadings.length === 0 ? (
-          <Card mode="outlined">
-            <Card.Content>
-              <Text variant="bodyMedium">No readings yet. Log your first meter reading to populate this list.</Text>
-            </Card.Content>
-          </Card>
-        ) : (
-          recentReadings.map(reading => {
-            const tenant = data.tenants.find(t => t.id === reading.tenantId);
-            return (
-              <Card key={reading.id} mode="elevated">
-                <Card.Title
-                  title={tenant?.name ?? 'Unknown tenant'}
-                  subtitle={`Recorded ${new Date(reading.date).toLocaleDateString()}`}
-                  right={() => (
-                    <Chip compact style={{ alignSelf: 'center', marginRight: 12 }}>
-                      {reading.value} units
-                    </Chip>
-                  )}
-                />
-              </Card>
-            );
-          })
-        )}
+      <View style={{ flexDirection: 'row', gap: 12 }}>
+        <Button
+          mode="contained"
+          icon="counter"
+          style={{ flex: 1 }}
+          contentStyle={{ paddingVertical: 4 }}
+          onPress={() => router.push('/reading/new')}
+        >
+          Log reading
+        </Button>
+        <Button
+          mode="outlined"
+          icon="account-plus"
+          style={{ flex: 1 }}
+          contentStyle={{ paddingVertical: 4 }}
+          onPress={() => router.push('/tenant/new')}
+        >
+          Add tenant
+        </Button>
       </View>
 
-      <View style={{ gap: 12 }}>
-        <Text variant="titleMedium">Needs attention</Text>
-        {overdueTenants.length === 0 ? (
-          <Card mode="outlined">
-            <Card.Content>
-              <Text variant="bodyMedium">All tenants have recent readings. Great job!</Text>
-            </Card.Content>
-          </Card>
+      <Section
+        title="Due for a reading"
+        aside={<Text variant="labelLarge" style={{ color: theme.colors.onSurfaceVariant }}>{overdue.length}</Text>}
+      >
+        {overdue.length === 0 ? (
+          <Panel>
+            <Card.Title
+              title="All caught up"
+              subtitle={`Every tenant has a reading from the last ${READING_INTERVAL_DAYS} days.`}
+              subtitleNumberOfLines={2}
+              subtitleStyle={{ color: theme.colors.onSurfaceVariant }}
+              left={props => <List.Icon {...props} icon="check-circle" color={theme.colors.primary} />}
+            />
+          </Panel>
         ) : (
-          overdueTenants.map(tenant => (
-            <Card key={tenant.id} mode="outlined">
-              <Card.Title
+          <Panel>
+            {overdue.map(({ tenant, latest }) => (
+              <List.Item
+                key={tenant.id}
                 title={tenant.name}
-                subtitle={tenant.notes ?? 'No notes yet'}
+                description={latest ? `Last reading: ${formatRelativeDay(latest.date)}` : 'No readings yet'}
+                onPress={() => router.push({ pathname: '/tenant/[id]', params: { id: tenant.id } })}
+                left={props => <List.Icon {...props} icon="clock-alert-outline" color={theme.colors.tertiary} />}
                 right={() => (
-                  <Link href={{ pathname: '/reading/new', params: { tenantId: tenant.id } }} asChild>
-                    <Button
-                      mode="contained-tonal"
-                      style={{ marginRight: 12, alignSelf: 'center' }}
-                      contentStyle={{ gap: 6 }}
-                    >
-                      Log reading
-                    </Button>
-                  </Link>
+                  <Button
+                    compact
+                    mode="text"
+                    icon="plus"
+                    onPress={() => router.push({ pathname: '/reading/new', params: { tenantId: tenant.id } })}
+                  >
+                    Log
+                  </Button>
                 )}
               />
-            </Card>
-          )))
-        }
-      </View>
+            ))}
+          </Panel>
+        )}
+      </Section>
+
+      <Section title="Recent readings">
+        {recent.length === 0 ? (
+          <Panel>
+            <EmptyState icon="counter" title="No readings yet" message="Log a meter reading to see it here." />
+          </Panel>
+        ) : (
+          <Panel>
+            {recent.map(({ reading, usage, tenantName }) => (
+              <List.Item
+                key={reading.id}
+                title={tenantName}
+                description={formatRelativeDay(reading.date)}
+                onPress={() => router.push({ pathname: '/reading/[id]', params: { id: reading.id } })}
+                left={props => <List.Icon {...props} icon="flash-outline" />}
+                right={() => (
+                  <View style={{ alignItems: 'flex-end', justifyContent: 'center' }}>
+                    <Text variant="titleSmall">{formatUnits(reading.value)}</Text>
+                    <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                      {usage !== undefined ? `+${formatUnits(usage)}` : 'First reading'}
+                    </Text>
+                  </View>
+                )}
+              />
+            ))}
+          </Panel>
+        )}
+      </Section>
     </Screen>
   );
 }

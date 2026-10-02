@@ -1,124 +1,98 @@
-import 'react-native-get-random-values';
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { v4 as uuidv4 } from 'uuid';
-import { AppData, Reading, Tenant, emptyData } from './types';
-import { loadData, saveData, exportData as doExport, importData as doImport } from './storage';
+import { randomUUID } from 'expo-crypto';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { loadData, saveData } from './storage';
+import { AppData, Reading, Settings, Tenant, emptyData } from './types';
 
 type DataContextValue = {
   data: AppData;
-  addTenant: (tenant: Omit<Tenant, 'id'>) => void;
-  updateTenant: (id: string, changes: Partial<Tenant>) => void;
+  ready: boolean;
+  addTenant: (tenant: Omit<Tenant, 'id'>) => string;
+  updateTenant: (id: string, changes: Partial<Omit<Tenant, 'id'>>) => void;
   deleteTenant: (id: string) => void;
-  addReading: (reading: Omit<Reading, 'id'>) => void;
-  updateReading: (id: string, changes: Partial<Reading>) => void;
+  addReading: (reading: Omit<Reading, 'id'>) => string;
+  updateReading: (id: string, changes: Partial<Omit<Reading, 'id'>>) => void;
   deleteReading: (id: string) => void;
-  updateSettings: (changes: Partial<AppData['settings']>) => void;
-  importFromFile: () => Promise<void>;
-  exportToFile: (options?: { includeSummary?: boolean }) => Promise<void>;
+  updateSettings: (changes: Partial<Settings>) => void;
+  replaceData: (next: AppData) => void;
 };
 
 const DataContext = createContext<DataContextValue | undefined>(undefined);
 
-const applyDefaults = (incoming: AppData): AppData => {
-  const template = emptyData();
-  return {
-    ...template,
-    ...incoming,
-    tenants: incoming.tenants ?? [],
-    readings: incoming.readings ?? [],
-    settings: {
-      ...template.settings,
-      ...(incoming.settings ?? {}),
-    },
-  };
-};
-
-export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [data, setData] = useState<AppData>(emptyData());
+export function DataProvider({ children }: { children: React.ReactNode }) {
+  const [data, setData] = useState<AppData>(emptyData);
+  const [ready, setReady] = useState(false);
+  // Skip persisting the state we just loaded from disk.
+  const dirty = useRef(false);
 
   useEffect(() => {
-    (async () => {
-      const loaded = await loadData();
-      setData(applyDefaults(loaded));
-    })();
+    let cancelled = false;
+    loadData()
+      .catch(() => emptyData())
+      .then(loaded => {
+        if (cancelled) return;
+        setData(loaded);
+        setReady(true);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const persist = async (next: AppData) => {
-    const normalized = applyDefaults(next);
-    setData(normalized);
-    await saveData(normalized);
-  };
+  useEffect(() => {
+    if (!ready || !dirty.current) return;
+    saveData(data).catch(error => console.warn('Failed to save data', error));
+  }, [data, ready]);
 
-  const addTenant = (tenant: Omit<Tenant, 'id'>) => {
-    const t: Tenant = { id: uuidv4(), ...tenant };
-    persist({ ...data, tenants: [...data.tenants, t] });
-  };
+  // Functional updates so rapid successive mutations never overwrite each other.
+  const mutate = useCallback((fn: (prev: AppData) => Omit<AppData, 'updatedAt'>) => {
+    dirty.current = true;
+    setData(prev => ({ ...fn(prev), updatedAt: new Date().toISOString() }));
+  }, []);
 
-  const updateTenant = (id: string, changes: Partial<Tenant>) => {
-    persist({
-      ...data,
-      tenants: data.tenants.map(t => (t.id === id ? { ...t, ...changes } : t)),
-    });
-  };
-
-  const deleteTenant = (id: string) => {
-    persist({
-      ...data,
-      tenants: data.tenants.filter(t => t.id !== id),
-      readings: data.readings.filter(r => r.tenantId !== id),
-    });
-  };
-
-  const addReading = (reading: Omit<Reading, 'id'>) => {
-    const r: Reading = { id: uuidv4(), ...reading };
-    persist({ ...data, readings: [...data.readings, r] });
-  };
-
-  const updateReading = (id: string, changes: Partial<Reading>) => {
-    persist({
-      ...data,
-      readings: data.readings.map(r => (r.id === id ? { ...r, ...changes } : r)),
-    });
-  };
-
-  const deleteReading = (id: string) => {
-    persist({ ...data, readings: data.readings.filter(r => r.id !== id) });
-  };
-
-  const importFromFile = async () => {
-    const incoming = await doImport();
-    if (incoming) setData(applyDefaults(incoming));
-  };
-
-  const exportToFile = async (options?: { includeSummary?: boolean }) => {
-    await doExport(data, options);
-  };
-
-  const updateSettings = (changes: Partial<AppData['settings']>) => {
-    persist({ ...data, settings: { ...data.settings, ...changes } });
-  };
-
-  const value = useMemo(
+  const value = useMemo<DataContextValue>(
     () => ({
       data,
-      addTenant,
-      updateTenant,
-      deleteTenant,
-      addReading,
-      updateReading,
-      deleteReading,
-      updateSettings,
-      importFromFile,
-      exportToFile,
+      ready,
+      addTenant: tenant => {
+        const id = randomUUID();
+        mutate(prev => ({ ...prev, tenants: [...prev.tenants, { ...tenant, id }] }));
+        return id;
+      },
+      updateTenant: (id, changes) =>
+        mutate(prev => ({
+          ...prev,
+          tenants: prev.tenants.map(t => (t.id === id ? { ...t, ...changes } : t)),
+        })),
+      deleteTenant: id =>
+        mutate(prev => ({
+          ...prev,
+          tenants: prev.tenants.filter(t => t.id !== id),
+          readings: prev.readings.filter(r => r.tenantId !== id),
+        })),
+      addReading: reading => {
+        const id = randomUUID();
+        mutate(prev => ({ ...prev, readings: [...prev.readings, { ...reading, id }] }));
+        return id;
+      },
+      updateReading: (id, changes) =>
+        mutate(prev => ({
+          ...prev,
+          readings: prev.readings.map(r => (r.id === id ? { ...r, ...changes } : r)),
+        })),
+      deleteReading: id =>
+        mutate(prev => ({ ...prev, readings: prev.readings.filter(r => r.id !== id) })),
+      updateSettings: changes =>
+        mutate(prev => ({ ...prev, settings: { ...prev.settings, ...changes } })),
+      replaceData: next => mutate(() => next),
     }),
-    [data]
+    [data, ready, mutate]
   );
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
-};
+}
 
-export const useData = () => {
+export function useData() {
   const ctx = useContext(DataContext);
   if (!ctx) throw new Error('useData must be used within DataProvider');
   return ctx;
-};
+}

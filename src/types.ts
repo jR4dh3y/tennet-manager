@@ -1,23 +1,26 @@
-export type UUID = string;
-
 export type Reading = {
-  id: UUID;
-  tenantId: UUID;
-  date: string; // ISO 8601
-  value: number; // meter reading units
+  id: string;
+  tenantId: string;
+  /** ISO 8601 timestamp, stored at local noon so the calendar day survives timezone shifts. */
+  date: string;
+  /** Cumulative meter value. */
+  value: number;
 };
 
 export type Tenant = {
-  id: UUID;
+  id: string;
   name: string;
-  unitRate?: number; // cost per unit
+  /** Cost per unit. Falls back to `Settings.defaultUnitRate` when unset. */
+  unitRate?: number;
   notes?: string;
 };
 
+export type ThemeMode = 'system' | 'light' | 'dark';
+
 export type Settings = {
-  currencySymbol: string; // e.g. ₹, $, £
+  currencySymbol: string;
   defaultUnitRate: number;
-  themeMode?: 'light' | 'dark';
+  themeMode: ThemeMode;
 };
 
 export type AppData = {
@@ -28,14 +31,16 @@ export type AppData = {
   settings: Settings;
 };
 
+export const defaultSettings: Settings = {
+  currencySymbol: '₹',
+  defaultUnitRate: 7,
+  themeMode: 'system',
+};
+
 export const emptyData = (): AppData => ({
   version: 1,
   updatedAt: new Date().toISOString(),
   tenants: [],
   readings: [],
-  settings: {
-    currencySymbol: '₹',
-    defaultUnitRate: 7,
-    themeMode: 'light',
-  },
+  settings: { ...defaultSettings },
 });

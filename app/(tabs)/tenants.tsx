@@ -1,172 +1,167 @@
+import { router } from 'expo-router';
 import React, { useMemo, useState } from 'react';
 import { FlatList, View } from 'react-native';
-import { Link } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import {
-  Avatar,
-  Card,
-  Chip,
-  FAB,
-  Searchbar,
-  SegmentedButtons,
-  Text,
-  useTheme,
-} from 'react-native-paper';
+import { Avatar, Button, Card, Chip, FAB, Searchbar, SegmentedButtons, Text, useTheme } from 'react-native-paper';
+import EmptyState from '../../src/components/EmptyState';
+import Panel from '../../src/components/Panel';
+import Screen, { SCREEN_PADDING } from '../../src/components/Screen';
 import { useData } from '../../src/DataContext';
-import Screen from '../../src/components/Screen';
+import { formatMoney, formatRate, formatRelativeDay, formatUnits, initials } from '../../src/lib/format';
+import { summarizeTenants, TenantSummary } from '../../src/lib/readings';
 
-const sortOptions = [
-  { value: 'name', label: 'Alphabetical', icon: 'sort-alphabetical-variant' },
-  { value: 'recent', label: 'Recent activity', icon: 'history' },
-] as const;
+type SortOption = 'recent' | 'name';
 
-type SortOption = (typeof sortOptions)[number]['value'];
+const FAB_CLEARANCE = 88;
 
 export default function TenantsScreen() {
-  const { data } = useData();
   const theme = useTheme();
-  const insets = useSafeAreaInsets();
+  const { data } = useData();
+  const symbol = data.settings.currencySymbol;
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<SortOption>('recent');
 
-  const latestReadingByTenant = useMemo(() => {
-    const sorted = [...data.readings].sort((a, b) => (a.date < b.date ? 1 : -1));
-    const map = new Map<string, { value: number; date: string; previousValue?: number }>();
-    sorted.forEach(reading => {
-      const existing = map.get(reading.tenantId);
-      if (!existing) {
-        map.set(reading.tenantId, { value: reading.value, date: reading.date });
-      } else if (existing.previousValue === undefined) {
-        map.set(reading.tenantId, { ...existing, previousValue: reading.value });
-      }
-    });
-    return map;
-  }, [data.readings]);
+  const summaries = useMemo(() => summarizeTenants(data), [data]);
 
-  const tenants = useMemo(() => {
-    const filtered = data.tenants.filter(tenant =>
-      tenant.name.toLowerCase().includes(query.trim().toLowerCase())
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const filtered = q
+      ? summaries.filter(
+          ({ tenant }) => tenant.name.toLowerCase().includes(q) || tenant.notes?.toLowerCase().includes(q)
+        )
+      : summaries;
+    const byName = (a: TenantSummary, b: TenantSummary) => a.tenant.name.localeCompare(b.tenant.name);
+    return [...filtered].sort((a, b) => {
+      if (sort === 'name') return byName(a, b);
+      const da = a.latest?.date ?? '';
+      const db = b.latest?.date ?? '';
+      return da === db ? byName(a, b) : da < db ? 1 : -1;
+    });
+  }, [summaries, query, sort]);
+
+  const renderItem = ({ item }: { item: TenantSummary }) => {
+    const { tenant, latest, lastUsage, lastBill, rate, overdue } = item;
+    return (
+      <Panel
+        onPress={() => router.push({ pathname: '/tenant/[id]', params: { id: tenant.id } })}
+      >
+        <Card.Title
+          title={tenant.name}
+          titleVariant="titleMedium"
+          subtitle={tenant.notes || formatRate(rate, symbol)}
+          subtitleStyle={{ color: theme.colors.onSurfaceVariant }}
+          left={props => (
+            <Avatar.Text
+              {...props}
+              label={initials(tenant.name)}
+              style={{ backgroundColor: theme.colors.primaryContainer }}
+              color={theme.colors.onPrimaryContainer}
+            />
+          )}
+          right={() =>
+            lastBill !== undefined ? (
+              <View style={{ alignItems: 'flex-end', paddingRight: 16 }}>
+                <Text variant="titleMedium" style={{ fontWeight: '700' }}>
+                  {formatMoney(lastBill, symbol)}
+                </Text>
+                <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                  last bill
+                </Text>
+              </View>
+            ) : null
+          }
+        />
+        <Card.Content style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+          {latest ? (
+            <Chip
+              compact
+              icon={overdue ? 'clock-alert-outline' : 'calendar-check'}
+              style={overdue ? { backgroundColor: theme.colors.tertiaryContainer } : undefined}
+              textStyle={overdue ? { color: theme.colors.onTertiaryContainer } : undefined}
+            >
+              {formatRelativeDay(latest.date)}
+            </Chip>
+          ) : (
+            <Chip compact icon="flash-off">
+              No readings yet
+            </Chip>
+          )}
+          {latest ? (
+            <Chip compact icon="counter">
+              {formatUnits(latest.value)}
+            </Chip>
+          ) : null}
+          {lastUsage !== undefined ? (
+            <Chip compact icon="trending-up">
+              +{formatUnits(lastUsage)}
+            </Chip>
+          ) : null}
+        </Card.Content>
+      </Panel>
     );
-
-    const sorted = [...filtered].sort((a, b) => {
-      if (sort === 'name') {
-        return a.name.localeCompare(b.name);
-      }
-      const aReading = latestReadingByTenant.get(a.id)?.date ?? '';
-      const bReading = latestReadingByTenant.get(b.id)?.date ?? '';
-      if (aReading === bReading) {
-        return a.name.localeCompare(b.name);
-      }
-      return aReading > bReading ? -1 : 1;
-    });
-
-    return sorted;
-  }, [data.tenants, query, sort, latestReadingByTenant]);
+  };
 
   return (
-    <Screen withPadding={false} title="">
-      <View
-        style={{
-          paddingTop: 16,
-          paddingHorizontal: 20,
-          paddingBottom: 12,
-          backgroundColor: theme.colors.surfaceVariant,
-        }}
-      >
-        <Searchbar
-          placeholder="Search tenants"
-          value={query}
-          onChangeText={setQuery}
-          style={{ marginBottom: 12 }}
-        />
-        <SegmentedButtons
-          value={sort}
-          onValueChange={value => setSort(value as SortOption)}
-          buttons={sortOptions.map(option => ({
-            value: option.value,
-            label: option.label,
-            icon: option.icon,
-          }))}
-        />
-      </View>
-
+    <Screen
+      title="Tenants"
+      inTabs
+      scroll={false}
+      overlay={
+        data.tenants.length > 0 ? (
+          <FAB
+            icon="account-plus"
+            label="Add tenant"
+            style={{ position: 'absolute', right: SCREEN_PADDING, bottom: SCREEN_PADDING }}
+            onPress={() => router.push('/tenant/new')}
+          />
+        ) : null
+      }
+    >
       <FlatList
-        style={{ flex: 1 }}
-        data={tenants}
-        keyExtractor={item => item.id}
-  contentContainerStyle={{ padding: 20, paddingBottom: 120 + insets.bottom, gap: 12 }}
-        renderItem={({ item }) => {
-          const reading = latestReadingByTenant.get(item.id);
-          const lastSeen = reading
-            ? new Date(reading.date).toLocaleDateString()
-            : 'No readings yet';
-          const usageSinceLast = reading && reading.previousValue !== undefined
-            ? Math.max(0, reading.value - reading.previousValue)
-            : undefined;
-          return (
-            <Link href={{ pathname: '/tenant/[id]', params: { id: item.id } }} asChild>
-              <Card mode="elevated">
-                <Card.Title
-                  title={item.name}
-                  subtitle={item.notes || undefined}
-                  left={props => <Avatar.Icon {...props} icon="account" />}
-                  right={props => (
-                    <View style={{ alignItems: 'flex-end', justifyContent: 'center', paddingRight: 12 }}>
-                      <Text variant="bodyMedium" style={{ fontWeight: '500' }}>
-                        Last reading
-                      </Text>
-                      <Text variant="labelMedium" style={{ opacity: 0.7 }}>
-                        {lastSeen}
-                      </Text>
-                    </View>
-                  )}
-                />
-                <Card.Content style={{ gap: 8 }}>
-                  <Text variant="bodyMedium">
-                    Unit rate: {item.unitRate ?? data.settings.defaultUnitRate}{' '}
-                    {data.settings.currencySymbol}/unit
-                  </Text>
-                  <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-                    {reading ? (
-                      <Chip icon="flash" compact>
-                        {reading.value} units total
-                      </Chip>
-                    ) : (
-                      <Chip icon="flash-off" compact>
-                        Awaiting first reading
-                      </Chip>
-                    )}
-                    {usageSinceLast !== undefined ? (
-                      <Chip icon="chart-line" compact>
-                        +{usageSinceLast} units last period
-                      </Chip>
-                    ) : null}
-                    {item.notes ? <Chip icon="note" compact>Notes</Chip> : null}
-                  </View>
-                </Card.Content>
-              </Card>
-            </Link>
-          );
-        }}
-        ListEmptyComponent={() => (
-          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 48 }}>
-            <Text variant="titleMedium" style={{ marginBottom: 8 }}>
-              No tenants yet
-            </Text>
-            <Text variant="bodyMedium" style={{ opacity: 0.7, textAlign: 'center', paddingHorizontal: 24 }}>
-              Create your first tenant to begin tracking consumption.
-            </Text>
-          </View>
-        )}
+        data={visible}
+        keyExtractor={item => item.tenant.id}
+        renderItem={renderItem}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ padding: SCREEN_PADDING, paddingTop: 4, paddingBottom: FAB_CLEARANCE, gap: 12 }}
+        ListHeaderComponent={
+          data.tenants.length > 0 ? (
+            <View style={{ gap: 12, marginBottom: 4 }}>
+              <Searchbar
+                placeholder="Search name or notes"
+                value={query}
+                onChangeText={setQuery}
+                style={{ backgroundColor: theme.colors.elevation.level3 }}
+              />
+              <SegmentedButtons
+                value={sort}
+                onValueChange={value => setSort(value as SortOption)}
+                density="small"
+                buttons={[
+                  { value: 'recent', label: 'Recent', icon: 'history' },
+                  { value: 'name', label: 'A–Z', icon: 'sort-alphabetical-ascending' },
+                ]}
+              />
+            </View>
+          ) : null
+        }
+        ListEmptyComponent={
+          data.tenants.length === 0 ? (
+            <EmptyState
+              icon="account-group-outline"
+              title="No tenants yet"
+              message="Add a tenant to start tracking their meter readings."
+              action={
+                <Button mode="contained" icon="account-plus" onPress={() => router.push('/tenant/new')}>
+                  Add tenant
+                </Button>
+              }
+            />
+          ) : (
+            <EmptyState icon="account-search-outline" title="No matches" message={`Nothing matches “${query.trim()}”.`} />
+          )
+        }
       />
-
-      <Link href={{ pathname: '/tenant/new' }} asChild>
-        <FAB
-          icon="account-plus"
-          style={{ position: 'absolute', right: 20, bottom: 24 + insets.bottom }}
-          onPress={() => {}}
-        />
-      </Link>
     </Screen>
   );
 }
